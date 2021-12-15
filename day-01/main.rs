@@ -5,7 +5,7 @@ use itertools::Itertools;
 fn parse(input: &str) -> Vec<u32> {
     input
         .trim()
-        .split('\n')
+        .lines()
         .map(|n| n.parse::<u32>())
         .map(Result::unwrap)
         .collect()
