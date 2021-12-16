@@ -10,6 +10,9 @@ path="day-01/main.rs"
 [[bin]]
 name="day-02"
 path="day-02/main.rs"
+[[bin]]
+name="day-03"
+path="day-03/main.rs"
 
 [dependencies]
 itertools = "0.10.3"
