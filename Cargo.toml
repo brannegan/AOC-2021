@@ -16,6 +16,9 @@ path="day-03/main.rs"
 [[bin]]
 name="day-04"
 path="day-04/main.rs"
+[[bin]]
+name="day-05"
+path="day-05/main.rs"
 
 [dependencies]
 anyhow = "1.0.51"
