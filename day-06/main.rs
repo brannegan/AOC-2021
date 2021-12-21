@@ -41,7 +41,7 @@ fn parse(input: &str) -> anyhow::Result<FishSim> {
         .map_err(|_: nom::error::Error<&str>| anyhow::anyhow!("parser error"))
 }
 fn main() -> anyhow::Result<()> {
-    let input = read_to_string("day-06/input.txt").unwrap();
+    let input = read_to_string("day-06/input.txt")?;
     let mut sim = parse(&input)?;
     let part1 = sim.fishes_after(80);
     println!("part1 result is {}", part1);

@@ -85,7 +85,7 @@ fn parse(input: &str) -> anyhow::Result<ParsedInput> {
         .map_err(|_: nom::error::Error<&str>| anyhow::anyhow!("parser error"))
 }
 fn main() -> anyhow::Result<()> {
-    let input = read_to_string("day-05/input.txt").unwrap();
+    let input = read_to_string("day-05/input.txt")?;
     let parsed = parse(&input)?;
     let part1 = lines_overlaped(&parsed, Line::hor_vert);
     println!("part1 result is {}", part1);

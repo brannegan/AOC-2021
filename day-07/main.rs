@@ -36,7 +36,7 @@ fn alignment_cost_progressive(offsets: &[i32]) -> i32 {
     fuel_for_mean.min(fuel_for_mean_ceil)
 }
 fn main() -> anyhow::Result<()> {
-    let input = read_to_string("day-07/input.txt").unwrap();
+    let input = read_to_string("day-07/input.txt")?;
     let offsets = parse(&input)?;
     let part1 = alignment_cost_constant(&offsets);
     println!("part1 result is {}", part1);

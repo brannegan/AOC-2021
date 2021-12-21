@@ -117,7 +117,7 @@ fn last_winner_score(input: &ParsedInput) -> Option<u32> {
     None
 }
 fn main() -> anyhow::Result<()> {
-    let input = read_to_string("day-04/input.txt").unwrap();
+    let input = read_to_string("day-04/input.txt")?;
     let parsed = parse(&input)?;
     let part1 = first_winner_score(&parsed).expect("No one won yet");
     println!("part1 result is {}", part1);
