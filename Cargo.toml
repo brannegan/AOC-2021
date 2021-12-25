@@ -37,8 +37,12 @@ path="day-10/main.rs"
 [[bin]]
 name="day-11"
 path="day-11/main.rs"
+[[bin]]
+name="day-12"
+path="day-12/main.rs"
 
 [dependencies]
 anyhow = "1.0.51"
 itertools = "0.10.3"
 nom = "7.1.0"
+petgraph = "0.6.0"
