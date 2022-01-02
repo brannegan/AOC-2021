@@ -1,4 +1,4 @@
-use itertools::{repeat_n, Itertools};
+use itertools::Itertools;
 use nom::{
     bytes::complete::take,
     character::complete::{line_ending, u32},
@@ -6,7 +6,7 @@ use nom::{
     Finish, Parser,
 };
 use petgraph::{algo::astar, graph::NodeIndex, Graph};
-use std::{fs::read_to_string, iter::Flatten};
+use std::fs::read_to_string;
 
 #[derive(Debug, Clone)]
 struct RiskMap {
@@ -62,17 +62,17 @@ fn parse(input: &str) -> anyhow::Result<Vec<Vec<u32>>> {
         .map(|(_input, parsed)| parsed)
         .map_err(|e: nom::error::VerboseError<&str>| anyhow::anyhow!("parser error: {:?}", e))
 }
-fn tiled(mut tile: Vec<Vec<u32>>, num: usize) -> Vec<Vec<u32>> {
-    for row in tile.iter_mut() {
-        let mut cloned = row.clone();
-        for _ in 0..num {
-            row.extend(cloned.iter_mut().map(|e| {
-                *e = (*e % 9) + 1;
-                *e
-            }));
+fn tiled(tile: Vec<Vec<u32>>, num: usize) -> Vec<Vec<u32>> {
+    let w = tile[0].len();
+    let h = tile.len();
+    let mut res = vec![vec![0; w * num]; h * num];
+    for i in 0..h * num {
+        for j in 0..w * num {
+            let shift_and_inc = (i / h) as isize + (j / w) as isize - 1;
+            res[i][j] = ((tile[i % h][j % w] as isize + shift_and_inc) % 9 + 1) as u32;
         }
     }
-    tile
+    res
 }
 fn main() -> anyhow::Result<()> {
     let input = read_to_string("day-15/input.txt")?;
