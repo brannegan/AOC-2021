@@ -1,4 +1,3 @@
-use derive_try_from_primitive::TryFromPrimitive;
 use nom::combinator::map;
 use nom::multi::{length_count, many_till};
 use nom::sequence::preceded;
@@ -11,34 +10,23 @@ use std::{fs::read_to_string, u8};
 struct Packet {
     version: u8,
     kind: PacketKind,
-    data: PacketData,
+    data: Option<Vec<Packet>>,
 }
-#[derive(Debug, Clone, PartialEq, Eq, TryFromPrimitive)]
-#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PacketKind {
     Sum,
     Prod,
     Min,
     Max,
-    Literal,
+    Literal(u64),
     Gt,
     Lt,
     Eq,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PacketData {
-    Value(u64),
-    SubPackets(Vec<Packet>),
-}
-
 type ParseResult<'a, T> = IResult<(&'a [u8], usize), T>;
 
-fn remaining_len(input: (&[u8], usize)) -> usize {
-    input.0.len() * 8 - input.1
-}
-
-fn parse_literal(input: (&[u8], usize)) -> ParseResult<PacketData> {
+fn parse_literal(input: (&[u8], usize)) -> ParseResult<PacketKind> {
     let group = preceded(tag(0b1, 1usize), take(4usize));
     let group_last = preceded(tag(0b0, 1usize), take(4usize));
     let groups = many_till(group, group_last);
@@ -52,14 +40,17 @@ fn parse_literal(input: (&[u8], usize)) -> ParseResult<PacketData> {
                 let shifted_n = (n as u64) << ((i + 1) * 4);
                 acc + shifted_n
             });
-        PacketData::Value(literal)
+        PacketKind::Literal(literal)
     });
     parser.parse(input)
 }
-fn parse_subpackets(input: (&[u8], usize)) -> ParseResult<PacketData> {
+fn parse_subpackets(input: (&[u8], usize)) -> ParseResult<Vec<Packet>> {
     let (input, length_type_id) = take(1usize)(input)?;
     match length_type_id {
         0 => {
+            fn remaining_len(input: (&[u8], usize)) -> usize {
+                input.0.len() * 8 - input.1
+            }
             let (mut input, len) = take(15usize)(input)?;
             let mut packets = vec![];
             let mut cur_len = remaining_len(input);
@@ -70,12 +61,11 @@ fn parse_subpackets(input: (&[u8], usize)) -> ParseResult<PacketData> {
                 cur_len = remaining_len(input);
                 packets.push(packet);
             }
-            Ok((input, PacketData::SubPackets(packets)))
+            Ok((input, packets))
         }
         1 => {
             let num = take::<_, u16, _, _>(11usize);
-            let mut parser =
-                length_count(num, Packet::parse_from_offset).map(PacketData::SubPackets);
+            let mut parser = length_count(num, Packet::parse_from_offset);
             parser.parse(input)
         }
         // SAFETY: match on 1 bit value
@@ -88,11 +78,29 @@ impl Packet {
     }
     fn parse_from_offset(input: (&[u8], usize)) -> ParseResult<Self> {
         let (input, version) = take(3usize)(input)?;
-        let (input, type_id) = take(3usize)(input)?;
-        let kind = PacketKind::try_from(type_id).expect("u8 -> PacketKind");
-        let (input, data) = match type_id {
-            4 => parse_literal(input)?,
-            _ => parse_subpackets(input)?,
+        let (mut input, type_id) = take(3usize)(input)?;
+        let kind = match type_id {
+            0 => PacketKind::Sum,
+            1 => PacketKind::Prod,
+            2 => PacketKind::Min,
+            3 => PacketKind::Max,
+            4 => {
+                let (i, literal) = parse_literal(input)?;
+                input = i;
+                literal
+            }
+            5 => PacketKind::Gt,
+            6 => PacketKind::Lt,
+            7 => PacketKind::Eq,
+            _ => unimplemented!(),
+        };
+        let data = match kind {
+            PacketKind::Literal(_) => None,
+            _ => {
+                let (i, packets) = parse_subpackets(input)?;
+                input = i;
+                Some(packets)
+            }
         };
         Ok((
             input,
@@ -104,47 +112,31 @@ impl Packet {
         ))
     }
     fn version_sum(&self) -> u64 {
-        match &self.data {
-            PacketData::Value(_) => self.version as u64,
-            PacketData::SubPackets(packets) => {
-                packets.iter().map(|p| p.version_sum()).sum::<u64>() + self.version as u64
+        match &self.kind {
+            PacketKind::Literal(_) => self.version as u64,
+            _ => {
+                self.data
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.version_sum())
+                    .sum::<u64>()
+                    + self.version as u64
             }
         }
     }
     fn eval(&self) -> u64 {
+        let empty = vec![];
+        let packets = self.data.as_ref().unwrap_or(&empty);
         match &self.kind {
-            PacketKind::Sum => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => packets.iter().map(|p| p.eval()).sum(),
-            },
-            PacketKind::Prod => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => packets.iter().map(|p| p.eval()).product(),
-            },
-            PacketKind::Min => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => packets.iter().map(|p| p.eval()).min().unwrap(),
-            },
-            PacketKind::Max => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => packets.iter().map(|p| p.eval()).max().unwrap(),
-            },
-            PacketKind::Literal => match self.data {
-                PacketData::Value(n) => n,
-                PacketData::SubPackets(_) => unreachable!("should be literal"),
-            },
-            PacketKind::Gt => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => (packets[0].eval() > packets[1].eval()) as u64,
-            },
-            PacketKind::Lt => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => (packets[0].eval() < packets[1].eval()) as u64,
-            },
-            PacketKind::Eq => match &self.data {
-                PacketData::Value(n) => *n,
-                PacketData::SubPackets(packets) => (packets[0].eval() == packets[1].eval()) as u64,
-            },
+            PacketKind::Sum => packets.iter().map(|p| p.eval()).sum(),
+            PacketKind::Prod => packets.iter().map(|p| p.eval()).product(),
+            PacketKind::Min => packets.iter().map(|p| p.eval()).min().unwrap(),
+            PacketKind::Max => packets.iter().map(|p| p.eval()).max().unwrap(),
+            PacketKind::Literal(n) => *n,
+            PacketKind::Gt => (packets[0].eval() > packets[1].eval()) as u64,
+            PacketKind::Lt => (packets[0].eval() < packets[1].eval()) as u64,
+            PacketKind::Eq => (packets[0].eval() == packets[1].eval()) as u64,
         }
     }
 }
@@ -154,7 +146,7 @@ fn main() -> anyhow::Result<()> {
     let input = hex::decode(input.trim())?;
     let (_, packet) = Packet::parse(&input).map_err(|_| anyhow::anyhow!("parse packet error"))?;
     println!("part1 result is {}", packet.version_sum());
-    //println!("part2 result is {}", part2);
+    println!("part2 result is {}", packet.eval());
     Ok(())
 }
 
@@ -171,8 +163,8 @@ mod tests {
             packet,
             Packet {
                 version: 6,
-                kind: PacketKind::Literal,
-                data: PacketData::Value(2021)
+                kind: PacketKind::Literal(2021),
+                data: None,
             }
         );
         Ok(())
@@ -185,18 +177,18 @@ mod tests {
             Packet {
                 version: 1,
                 kind: PacketKind::Lt,
-                data: PacketData::SubPackets(vec![
+                data: Some(vec![
                     Packet {
                         version: 6,
-                        kind: PacketKind::Literal,
-                        data: PacketData::Value(10)
+                        kind: PacketKind::Literal(10),
+                        data: None,
                     },
                     Packet {
                         version: 2,
-                        kind: PacketKind::Literal,
-                        data: PacketData::Value(20)
+                        kind: PacketKind::Literal(20),
+                        data: None,
                     },
-                ],)
+                ]),
             }
         );
         Ok(())
@@ -209,21 +201,21 @@ mod tests {
             Packet {
                 version: 7,
                 kind: PacketKind::Max,
-                data: PacketData::SubPackets(vec![
+                data: Some(vec![
                     Packet {
                         version: 2,
-                        kind: PacketKind::Literal,
-                        data: PacketData::Value(1),
+                        kind: PacketKind::Literal(1),
+                        data: None,
                     },
                     Packet {
                         version: 4,
-                        kind: PacketKind::Literal,
-                        data: PacketData::Value(2),
+                        kind: PacketKind::Literal(2),
+                        data: None,
                     },
                     Packet {
                         version: 1,
-                        kind: PacketKind::Literal,
-                        data: PacketData::Value(3),
+                        kind: PacketKind::Literal(3),
+                        data: None,
                     },
                 ],)
             }
