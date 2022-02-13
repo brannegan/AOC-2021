@@ -66,6 +66,7 @@ itertools = "0.10.3"
 ndarray = "0.15.4"
 nom = "7.1.0"
 petgraph = "0.6.0"
+indextree = "4"
 
 [dev-dependencies]
 hex-literal = "0.3.4"
