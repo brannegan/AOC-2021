@@ -1,9 +1,4 @@
-use bitvec::{
-    bitvec,
-    field::BitField,
-    order::{Lsb0, Msb0},
-    vec::BitVec,
-};
+use bitvec::{bitvec, field::BitField, order::Msb0, vec::BitVec};
 use nom::character::complete::line_ending;
 use nom::combinator::map;
 use nom::multi::{many0, separated_list0};
@@ -81,12 +76,11 @@ fn parse(input: &str) -> anyhow::Result<ParsedInput> {
         .map_err(|e: nom::error::VerboseError<&str>| anyhow::anyhow!("parser error: {:?}", e))
 }
 fn image_enhancement_algo(image: &Image, ieas: &BitVec, kernel_size: usize) -> Image {
-    let bordered = image.bordered(kernel_size - 1);
-    let w = bordered.data[0].len();
-    let mut data = Vec::with_capacity(bordered.data.len());
-    for rows in bordered.data.windows(kernel_size) {
-        let mut row = BitVec::<usize, Lsb0>::new();
-        for i in 0..=w - 3 {
+    let width = image.data[0].len();
+    let mut data = Vec::with_capacity(image.data.len());
+    for rows in image.data.windows(kernel_size) {
+        let mut row = BitVec::new();
+        for i in 0..=width - kernel_size {
             let idx: usize = rows
                 .iter()
                 .fold(
@@ -110,16 +104,23 @@ fn lit_pixels(image: &Image) -> usize {
 fn main() -> anyhow::Result<()> {
     let input = read_to_string("day-20/input.txt")?;
     let parsed = parse(input.trim())?;
-    let image = image_enhancement_algo(&parsed.input, &parsed.ieas, 3);
-    eprintln!("{}", image);
-    let image2 = image_enhancement_algo(&image, &parsed.ieas, 3);
-    let part1 = lit_pixels(&image2);
-    //let part2 = lit_pixels(&image);
-    //let part3 = lit_pixels(&image2.bordered(2));
+    let runs = 2;
+    let kernel_size = 3;
+    let mut image = parsed.input.bordered(runs * (kernel_size - 1));
+    for _ in 0..runs {
+        image = image_enhancement_algo(&image, &parsed.ieas, kernel_size);
+    }
+    let part1 = lit_pixels(&image);
     println!("part1 result is {part1}");
-    //let part2 = possible_velocities_count(target_area);
-    //assert_eq!(part2, 3773);
-    //println!("part2 result is {}", part2);
+
+    let runs = 50;
+    let kernel_size = 3;
+    let mut image = parsed.input.bordered(runs * (kernel_size - 1));
+    for _ in 0..runs {
+        image = image_enhancement_algo(&image, &parsed.ieas, kernel_size);
+    }
+    let part2 = lit_pixels(&image);
+    println!("part2 result is {part2}");
     Ok(())
 }
 
@@ -138,15 +139,28 @@ mod tests {
     #[test]
     fn part1() -> anyhow::Result<()> {
         let parsed = parse(INPUT)?;
-        let image = image_enhancement_algo(&parsed.input, &parsed.ieas, 3);
-        let image2 = image_enhancement_algo(&image, &parsed.ieas, 3);
-        eprintln!("{}", image2.bordered(2));
-        assert_eq!(lit_pixels(&image2), 35);
+        let runs = 2;
+        let kernel_size = 3;
+        let mut image = parsed.input.bordered(runs * (kernel_size - 1));
+        for _ in 0..runs {
+            image = image_enhancement_algo(&image, &parsed.ieas, kernel_size);
+        }
+        eprintln!("{}", image.bordered(2));
+        assert_eq!(lit_pixels(&image), 35);
         Ok(())
     }
-    //#[test]
-    //fn part2() -> anyhow::Result<()> {
-    //    let parsed = parse(INPUT)?;
-    //    Ok(())
-    //}
+    #[test]
+    fn part2() -> anyhow::Result<()> {
+        let parsed = parse(INPUT)?;
+        let runs = 50;
+        let kernel_size = 3;
+        let mut image = parsed.input.bordered(runs * (kernel_size - 1));
+        for _ in 0..runs {
+            image = image_enhancement_algo(&image, &parsed.ieas, kernel_size);
+        }
+        eprintln!("{}", image);
+        assert_eq!(lit_pixels(&image), 3351);
+        Ok(())
+    }
 }
+
