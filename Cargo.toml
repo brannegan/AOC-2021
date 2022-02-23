@@ -61,6 +61,9 @@ path="day-18/main.rs"
 [[bin]]
 name="day-19"
 path="day-19/main.rs"
+[[bin]]
+name="day-20"
+path="day-20/main.rs"
 
 [dependencies]
 anyhow = "1.0.51"
@@ -70,7 +73,7 @@ ndarray = "0.15.4"
 nom = "7.1.0"
 petgraph = "0.6.0"
 indextree = "4"
-glam = "0.20"
+bitvec = "1"
 
 [dev-dependencies]
 hex-literal = "0.3.4"
