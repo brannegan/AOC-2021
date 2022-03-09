@@ -6,41 +6,48 @@ use nom::{
     sequence::preceded,
     Finish, Parser,
 };
-use std::{collections::HashMap, fs::read_to_string};
+use once_cell::sync::OnceCell;
+use std::{cell::RefCell, collections::HashMap, fs::read_to_string};
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 struct Player {
     pos: u32,
     score: u32,
+    id: usize,
 }
 
 impl Player {
-    fn turn(self, roll: u32) -> Self {
-        let new_pos = (self.pos + roll - 1) % 10 + 1;
-        Self {
-            pos: new_pos,
-            score: self.score + new_pos,
-        }
+    fn turn(mut self, roll: u32) -> Self {
+        self.pos = (self.pos + roll - 1) % 10 + 1;
+        self.score += self.pos;
+        self
     }
 }
 
 fn parse(input: &str) -> anyhow::Result<Vec<Player>> {
-    let player = preceded(take_until(": ").and(tag(": ")), u32).map(|pos| Player { pos, score: 0 });
-    let mut parser = separated_list0(line_ending, player);
+    let positions = preceded(take_until(": ").and(tag(": ")), u32);
+    let mut parser = separated_list0(line_ending, positions).map(|positions| {
+        positions
+            .into_iter()
+            .enumerate()
+            .map(|(id, pos)| Player { pos, id, score: 0 })
+            .collect()
+    });
     parser
         .parse(input)
         .finish()
         .map(|(_input, parsed)| parsed)
         .map_err(|e: nom::error::VerboseError<&str>| anyhow::anyhow!("parser error: {:?}", e))
 }
-#[derive(Debug, Clone)]
 struct Dice {
     win_score: u32,
     rolls_per_turn: usize,
     dice_sides: u32,
     players: Vec<Player>,
-    rolls_freq: Option<HashMap<u32, usize>>,
+    cache: RefCell<HashMap<GameState, [u64; 2]>>,
 }
+#[derive(PartialEq, Eq, Hash)]
+struct GameState((Player, Player));
 
 impl Dice {
     fn new(win_score: u32, rolls_per_turn: usize, dice_sides: u32, players: Vec<Player>) -> Self {
@@ -49,7 +56,7 @@ impl Dice {
             rolls_per_turn,
             dice_sides,
             players,
-            rolls_freq: None,
+            cache: RefCell::new(HashMap::new()),
         }
     }
     fn determministic_rolls(&mut self) -> usize {
@@ -76,30 +83,39 @@ impl Dice {
             .min()
             .unwrap() as usize
     }
-    fn dirac_winner_counts(&mut self) -> [u64; 2] {
-        self.rolls_freq = Some(
+    fn rolls_freq(&self) -> &HashMap<u32, usize> {
+        static ROLLS: OnceCell<HashMap<u32, usize>> = OnceCell::new();
+        ROLLS.get_or_init(|| {
             (1..=self.dice_sides)
                 .cartesian_product(1..=self.dice_sides)
                 .cartesian_product(1..=self.dice_sides)
                 .map(|((a, b), c)| a + b + c)
-                .counts(),
-        );
+                .counts()
+        })
+    }
+    fn dirac_winner_counts(&self) -> [u64; 2] {
         self.universe(self.players[0], self.players[1])
     }
 
     fn universe(&self, p1: Player, p2: Player) -> [u64; 2] {
-        if p1.score >= 21 {
-            return [1, 0];
-        }
         if p2.score >= 21 {
             return [0, 1];
         }
-        let mut wins = [0, 0];
-        for (&roll, &freq) in self.rolls_freq.as_ref().unwrap() {
-            let [w0, w1] = self.universe(p2, p1.turn(roll));
-            wins[0] += w1 * freq as u64;
-            wins[1] += w0 * freq as u64;
+        let state = GameState((p1, p2));
+        if self.cache.borrow().contains_key(&state) {
+            return self.cache.borrow()[&state];
         }
+
+        let wins = self
+            .rolls_freq()
+            .iter()
+            .fold([0, 0], |mut acc, (&roll, &freq)| {
+                let [w0, w1] = self.universe(p2, p1.turn(roll));
+                acc[0] += w1 * freq as u64;
+                acc[1] += w0 * freq as u64;
+                acc
+            });
+        self.cache.borrow_mut().insert(state, wins);
         wins
     }
 }
@@ -110,7 +126,7 @@ fn main() -> anyhow::Result<()> {
     let part1 = game.determministic_rolls() * game.looser_score();
     println!("part1 result is {}", part1);
 
-    let mut game = Dice::new(21, 3, 3, players);
+    let game = Dice::new(21, 3, 3, players);
     let part2 = game.dirac_winner_counts().into_iter().max().unwrap();
     println!("part2 result is {}", part2);
     Ok(())
@@ -134,7 +150,7 @@ Player 2 starting position: 8
     #[test]
     fn part2() -> anyhow::Result<()> {
         let players = parse(INPUT)?;
-        let mut game = Dice::new(21, 3, 3, players);
+        let game = Dice::new(21, 3, 3, players);
         let part2 = game.dirac_winner_counts();
         assert_eq!(part2[0], 444_356_092_776_315);
         Ok(())
