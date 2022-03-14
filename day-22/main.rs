@@ -7,14 +7,78 @@ use nom::{
     sequence::{preceded, separated_pair},
     Finish, Parser,
 };
-use std::{collections::HashSet, fs::read_to_string, ops::RangeInclusive};
+use std::{
+    cmp::{max, min},
+    collections::HashSet,
+    fs::read_to_string,
+    ops::Range,
+};
 
-#[derive(Debug, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, Hash)]
+struct Cuboid {
+    x_range: Range<i32>,
+    y_range: Range<i32>,
+    z_range: Range<i32>,
+}
+
+impl Cuboid {
+    fn intersects(&self, other: &Cuboid) -> bool {
+        fn overlapped(a: &Range<i32>, b: &Range<i32>) -> bool {
+            !(a.start >= b.end || b.start >= a.end)
+        }
+        overlapped(&self.x_range, &other.x_range)
+            && overlapped(&self.y_range, &other.y_range)
+            && overlapped(&self.z_range, &other.z_range)
+    }
+    fn intersection(&self, other: &Cuboid) -> Cuboid {
+        if self.intersects(other) {
+            Cuboid {
+                x_range: max(self.x_range.start, other.x_range.start)
+                    ..min(self.x_range.end, other.x_range.end),
+                y_range: max(self.y_range.start, other.y_range.start)
+                    ..min(self.y_range.end, other.y_range.end),
+                z_range: max(self.z_range.start, other.z_range.start)
+                    ..min(self.z_range.end, other.z_range.end),
+            }
+        } else {
+            Default::default()
+        }
+    }
+    fn split(&self, other: &Cuboid) -> Vec<Cuboid> {
+        let other = self.intersection(other);
+        [
+            self.x_range.start..other.x_range.start,
+            other.x_range.start..other.x_range.end,
+            other.x_range.end..self.x_range.end,
+        ]
+        .iter()
+        .cartesian_product([
+            self.y_range.start..other.y_range.start,
+            other.y_range.start..other.y_range.end,
+            other.y_range.end..self.y_range.end,
+        ])
+        .cartesian_product([
+            self.z_range.start..other.z_range.start,
+            other.z_range.start..other.z_range.end,
+            other.z_range.end..self.z_range.end,
+        ])
+        .map(|((x_range, y_range), z_range)| Cuboid {
+            x_range: x_range.clone(),
+            y_range,
+            z_range,
+        })
+        .filter(|c| c.volume() > 0 && *c != other)
+        .collect()
+    }
+    fn volume(&self) -> u64 {
+        (self.x_range.len() * self.y_range.len() * self.z_range.len()) as u64
+    }
+}
+
+#[derive(Clone, Debug)]
 struct Step {
-    x_range: RangeInclusive<i32>,
-    y_range: RangeInclusive<i32>,
-    z_range: RangeInclusive<i32>,
-    on_off: bool,
+    cuboid: Cuboid,
+    on: bool,
 }
 #[derive(Debug, Clone)]
 struct ParsedInput {
@@ -30,20 +94,20 @@ fn parse(input: &str) -> anyhow::Result<ParsedInput> {
         separated_pair(x_range, tag(","), y_range),
         tag(","),
         z_range,
-    );
-    let step =
-        separated_pair(on_off, space0, ranges).map(|(on_off, ((x_range, y_range), z_range))| {
-            Step {
-                on_off: match on_off {
-                    "off" => false,
-                    "on" => true,
-                    _ => unreachable!(),
-                },
-                x_range: x_range.0..=x_range.1,
-                y_range: y_range.0..=y_range.1,
-                z_range: z_range.0..=z_range.1,
-            }
-        });
+    )
+    .map(|((x_range, y_range), z_range)| Cuboid {
+        x_range: x_range.0..x_range.1 + 1,
+        y_range: y_range.0..y_range.1 + 1,
+        z_range: z_range.0..z_range.1 + 1,
+    });
+    let step = separated_pair(on_off, space0, ranges).map(|(on_off, cube)| Step {
+        on: match on_off {
+            "on" => true,
+            "off" => false,
+            _ => unreachable!(),
+        },
+        cuboid: cube,
+    });
     let mut parser = separated_list1(line_ending, step).map(|steps| ParsedInput { steps });
     parser
         .parse(input)
@@ -51,15 +115,16 @@ fn parse(input: &str) -> anyhow::Result<ParsedInput> {
         .map(|(_input, parsed)| parsed)
         .map_err(|e: nom::error::VerboseError<&str>| anyhow::anyhow!("parser error: {:?}", e))
 }
-fn reboot_seq(steps: Vec<Step>) -> HashSet<(i32, i32, i32)> {
+fn reboot_seq_naive(steps: &[Step]) -> HashSet<(i32, i32, i32)> {
     let mut res = HashSet::new();
-    steps.into_iter().for_each(|step| {
-        step.x_range
+    steps.iter().cloned().for_each(|step| {
+        step.cuboid
+            .x_range
             .filter(|x| x.abs() <= 50)
-            .cartesian_product(step.y_range.filter(|y| y.abs() <= 50))
-            .cartesian_product(step.z_range.filter(|z| z.abs() <= 50))
+            .cartesian_product(step.cuboid.y_range.filter(|y| y.abs() <= 50))
+            .cartesian_product(step.cuboid.z_range.filter(|z| z.abs() <= 50))
             .for_each(|((x, y), z)| {
-                match step.on_off {
+                match step.on {
                     true => res.insert((x, y, z)),
                     false => res.remove(&(x, y, z)),
                 };
@@ -67,14 +132,43 @@ fn reboot_seq(steps: Vec<Step>) -> HashSet<(i32, i32, i32)> {
     });
     res
 }
+fn reboot_seq(steps: &[Step]) -> u64 {
+    let mut on_cuboids: HashSet<Cuboid> = HashSet::new();
+    for Step {
+        on,
+        cuboid: step_cuboid,
+    } in steps
+    {
+        let splitted: Vec<_> = on_cuboids
+            .iter()
+            .filter_map(|on_cuboid| {
+                on_cuboid
+                    .intersects(step_cuboid)
+                    .then(|| (on_cuboid.clone(), on_cuboid.split(step_cuboid)))
+            })
+            .collect();
+        for (orig, new) in splitted {
+            on_cuboids.remove(&orig);
+            on_cuboids.extend(new);
+        }
+        match on {
+            true => {
+                on_cuboids.insert(step_cuboid.clone());
+            }
+            false => {}
+        };
+    }
+    on_cuboids
+        .into_iter()
+        .fold(0, |acc, cuboid| acc + cuboid.volume())
+}
 fn main() -> anyhow::Result<()> {
     let input = read_to_string("day-22/input.txt")?;
     let parsed = parse(&input)?;
-    let part1 = reboot_seq(parsed.steps).len();
+    let part1 = reboot_seq_naive(&parsed.steps).len();
     println!("part1 result is {}", part1);
-    //let part2 = possible_velocities_count(target_area);
-    //assert_eq!(part2, 3773);
-    //println!("part2 result is {}", part2);
+    let part2 = reboot_seq(&parsed.steps);
+    println!("part2 result is {}", part2);
     Ok(())
 }
 
@@ -177,15 +271,15 @@ off x=-93533..-4276,y=-16170..68771,z=-104985..-24507
     #[test]
     fn part1() -> anyhow::Result<()> {
         let parsed = parse(INPUT1.trim())?;
-        assert_eq!(reboot_seq(parsed.steps).len(), 39);
+        assert_eq!(reboot_seq_naive(&parsed.steps).len(), 39);
         let parsed = parse(INPUT2.trim())?;
-        assert_eq!(reboot_seq(parsed.steps).len(), 590784);
+        assert_eq!(reboot_seq_naive(&parsed.steps).len(), 590784);
         Ok(())
     }
     #[test]
     fn part2() -> anyhow::Result<()> {
         let parsed = parse(INPUT3.trim())?;
-        assert_eq!(reboot_seq(parsed.steps).len(), 2758514936282235);
+        assert_eq!(reboot_seq(&parsed.steps), 2758514936282235);
         Ok(())
     }
 }
